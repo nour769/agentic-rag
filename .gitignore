@@ -1,5 +1,12 @@
-venv/
-__pycache__/
 .env
-data/
+venv/
+.venv/
+__pycache__/
 *.pyc
+data/
+qdrant_storage/
+build_log.txt
+test_output.txt
+node_modules/
+dist/
+.vite/
