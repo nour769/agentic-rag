@@ -5,21 +5,25 @@ import "./App.css";
 
 function App() {
   const [query, setQuery] = useState("");
-  const [domaine, setDomaine] = useState("");
-  const [bailleur, setBailleur] = useState("");
-  const [pays, setPays] = useState("");
-  const [region, setRegion] = useState("");
-  const [useAgent, setUseAgent] = useState(false);
-
+  const [filters, setFilters] = useState({ domaine: "", bailleur: "", pays: "", region: "" });
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
   const [agentAnswer, setAgentAnswer] = useState("");
   const [error, setError] = useState("");
   const [hasSearched, setHasSearched] = useState(false);
+  const [similarMissions, setSimilarMissions] = useState({});
+  const [loadingSimilar, setLoadingSimilar] = useState(null);
+  const [expandedSimilar, setExpandedSimilar] = useState(null);
 
-  const scrollToSearch = (e) => {
-    e.preventDefault();
-    document.getElementById("search").scrollIntoView({ behavior: "smooth" });
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+  const domaines = ["Santé", "Agriculture", "Développement", "Énergie", "Technologie", "Environnement"];
+  const bailleurs = ["Banque Mondiale", "FMI", "PNUD", "Union Européenne", "AFD", "FIDA"];
+  const pays = ["Sénégal", "Mali", "Burkina Faso", "Côte d'Ivoire", "Niger", "Autres"];
+  const regions = ["Afrique de l'Ouest", "Afrique de l'Est", "Afrique Centrale", "Afrique Australe"];
+
+  const handleFilterChange = (key, value) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSearch = async (e) => {
@@ -31,195 +35,225 @@ function App() {
     setAgentAnswer("");
     setResults([]);
     setHasSearched(true);
-
-    const endpoint = useAgent ? "/api/agent-search" : "/api/search";
+    setSimilarMissions({});
+    setExpandedSimilar(null);
 
     try {
-      const response = await axios.get(endpoint, {
-        params: {
-          query,
-          domaine: domaine || undefined,
-          bailleur: bailleur || undefined,
-          pays: pays || undefined,
-          region: region || undefined,
-        },
-      });
-
-      if (useAgent) {
-        setAgentAnswer(response.data.answer);
-        setResults(response.data.sources || []);
-      } else {
-        setResults(response.data.results || []);
-      }
+      const body = {
+        query: query,
+        top_k: 5,
+        score_threshold: 0.55,
+        ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)),
+      };
+      const response = await axios.post(API_URL + "/ask", body);
+      setAgentAnswer(response.data.answer || "");
+      setResults(response.data.sources || []);
     } catch (err) {
-      setError(
-        "La recherche n'a pas pu être effectuée. Vérifiez que le service est actif."
-      );
       console.error(err);
+      setError("La recherche n'a pas pu être effectuée. Vérifiez que l'API FastAPI est démarrée.");
     } finally {
       setLoading(false);
     }
   };
 
+  const fetchSimilar = async (fileName, idx) => {
+    if (similarMissions[idx]) {
+      setExpandedSimilar(expandedSimilar === idx ? null : idx);
+      return;
+    }
+    setLoadingSimilar(idx);
+    try {
+      const response = await axios.post(API_URL + "/similar", { file_name: fileName, chunk_id: 0, top_k: 4 });
+      setSimilarMissions((prev) => ({ ...prev, [idx]: response.data.results || [] }));
+      setExpandedSimilar(idx);
+    } catch (err) {
+      console.error(err);
+      setSimilarMissions((prev) => ({ ...prev, [idx]: [] }));
+      setExpandedSimilar(idx);
+    } finally {
+      setLoadingSimilar(null);
+    }
+  };
+
+  const resetFilters = () => {
+    setFilters({ domaine: "", bailleur: "", pays: "", region: "" });
+  };
+
   const scorePercent = (score) => Math.round(Math.min(score, 1) * 100);
+
+  const scrollToSearch = (e) => {
+    e.preventDefault();
+    document.getElementById("search-section").scrollIntoView({ behavior: "smooth" });
+  };
+
+  const getDownloadUrl = (fileName) => API_URL + "/download/" + encodeURIComponent(fileName);
+
+  const getScoreLabel = (score) => {
+    const pct = scorePercent(score);
+    if (pct >= 80) return "Très pertinent";
+    if (pct >= 60) return "Pertinent";
+    return "Possible";
+  };
+
+  const getSimilarButtonLabel = (idx) => {
+    if (loadingSimilar === idx) return "Chargement…";
+    if (expandedSimilar === idx) return "Masquer les missions similaires";
+    return "Voir les missions similaires";
+  };
 
   return (
     <div className="app">
-      {/* TOPBAR */}
       <header className="topbar">
         <div className="brand">
           <img src={eyLogo} alt="EY" className="brand-logo" />
-          <span className="brand-text">
-            TENDERSCOPE
-            <span className="brand-sub">Intelligence documentaire pour appels d'offres</span>
-          </span>
+          <div className="brand-content">
+            <span className="brand-text">TenderScope</span>
+            <span className="brand-sub">Recherche intelligente de Termes de Référence</span>
+          </div>
         </div>
         <nav className="topnav">
-          <a href="#search" onClick={scrollToSearch}>Recherche</a>
-          <a href="#about" onClick={(e) => e.preventDefault()}>Méthodologie</a>
+          <button onClick={scrollToSearch} className="nav-link">Recherche</button>
+          <a href="#" className="nav-link">À propos</a>
         </nav>
       </header>
 
-      {/* HERO */}
       <section className="hero">
-        <div className="hero-inner">
-          <p className="hero-eyebrow">Plateforme Agentic RAG</p>
-          <h1 className="hero-title">
-            Chaque Terme de Référence,<br />interrogé en quelques secondes.
-          </h1>
-          <p className="hero-lede">
-            Retrouvez instantanément les missions, profils et compétences exigées
-            à travers l'ensemble de votre base documentaire d'appels d'offres.
-          </p>
-
-          <div className="hero-stats">
-            <div className="stat">
-              <span className="stat-number">98</span>
-              <span className="stat-label">TdR indexés</span>
-            </div>
-            <div className="stat-divider" />
-            <div className="stat">
-              <span className="stat-number">3</span>
-              <span className="stat-label">Langues couvertes</span>
-            </div>
-            <div className="stat-divider" />
-            <div className="stat">
-              <span className="stat-number">&lt;30s</span>
-              <span className="stat-label">Par recherche enrichie</span>
-            </div>
-          </div>
-
-          <button className="hero-cta" onClick={scrollToSearch}>
-            Lancer une recherche
-            <span className="hero-cta-arrow">↓</span>
-          </button>
+        <div className="hero-content">
+         <h1 className="hero-title">Le TdR pertinent, retrouvé par le sens <br />pas par hasard.</h1>          <p className="hero-description">Décrivez la mission en langage naturel. L'agent identifie le Terme de Référence pertinent et répond à partir de son contenu réel.</p>
+          <button className="hero-cta" onClick={scrollToSearch}>Commencer la recherche</button>
         </div>
       </section>
 
-      {/* SEARCH */}
-      <main className="content" id="search">
-        <form className="search-panel" onSubmit={handleSearch}>
-          <label className="panel-label">Rechercher une mission ou un profil</label>
-          <div className="search-row">
-            <input
-              type="text"
-              placeholder="Ex. profil vétérinaire Afrique de l'Ouest, expert M&E santé publique…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="search-input"
-            />
-            <button type="submit" className="search-button" disabled={loading}>
-              {loading ? "Recherche en cours" : "Rechercher"}
-            </button>
-          </div>
+      <section className="search-section" id="search-section">
+        <div className="search-container">
+          <h2 className="section-title">Recherche</h2>
 
-          <div className="filters-row">
-            <div className="filter-field">
-              <label htmlFor="domaine">Domaine</label>
-              <input id="domaine" type="text" placeholder="Ex. Santé animale" value={domaine} onChange={(e) => setDomaine(e.target.value)} />
-            </div>
-            <div className="filter-field">
-              <label htmlFor="bailleur">Bailleur de fonds</label>
-              <input id="bailleur" type="text" placeholder="Ex. AFD, UE, DGD" value={bailleur} onChange={(e) => setBailleur(e.target.value)} />
-            </div>
-            <div className="filter-field">
-              <label htmlFor="pays">Pays</label>
-              <input id="pays" type="text" placeholder="Ex. Burkina Faso" value={pays} onChange={(e) => setPays(e.target.value)} />
-            </div>
-            <div className="filter-field">
-              <label htmlFor="region">Région</label>
-              <input id="region" type="text" placeholder="Ex. Afrique de l'Ouest" value={region} onChange={(e) => setRegion(e.target.value)} />
-            </div>
-          </div>
-
-          <label className="agent-toggle">
-            <input
-              type="checkbox"
-              checked={useAgent}
-              onChange={(e) => setUseAgent(e.target.checked)}
-            />
-            <span>
-              Activer la synthèse par agent — reformule la requête et rédige une réponse argumentée
-            </span>
-          </label>
-        </form>
-
-        {error && <div className="error-box">{error}</div>}
-
-        {agentAnswer && (
-          <div className="agent-answer">
-            <span className="agent-answer-eyebrow">Synthèse de l'agent</span>
-            <p>{agentAnswer}</p>
-          </div>
-        )}
-
-        {results.length > 0 && (
-          <div className="results-list">
-            <div className="results-header">
-              <h2>{results.length} extrait{results.length > 1 ? "s" : ""} pertinent{results.length > 1 ? "s" : ""}</h2>
-              <span className="results-sub">classés par pertinence sémantique</span>
+          <form className="search-form" onSubmit={handleSearch}>
+            <div className="search-input-group">
+              <label className="search-label">Question</label>
+              <div className="search-input-wrapper">
+                <input type="text" placeholder="Ex: barème de notation des candidats ERP UVT" value={query} onChange={(e) => setQuery(e.target.value)} className="search-input" autoFocus />
+                <button type="submit" className="search-btn" disabled={loading}>{loading ? "Analyse en cours…" : "Répondre"}</button>
+              </div>
             </div>
 
-            {results.map((r, idx) => (
-              <article className="result-card" key={idx}>
-                <div className="result-score-block">
-                  <div className="score-ring">
-                    <span className="score-value">{scorePercent(r.score)}</span>
-                    <span className="score-unit">%</span>
-                  </div>
-                  <span className="score-raw">score {r.score.toFixed(4)}</span>
+            <div className="filters-section">
+              <label className="filters-label">Filtres (optionnels)</label>
+              <div className="filters-grid">
+                <div className="filter-group">
+                  <label htmlFor="domaine">Domaine</label>
+                  <select id="domaine" value={filters.domaine} onChange={(e) => handleFilterChange("domaine", e.target.value)} className="filter-select">
+                    <option value="">Tous les domaines</option>
+                    {domaines.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
                 </div>
-                <div className="result-body">
-                  <div className="result-header">
-                    <h3 className="result-file">{r.file}</h3>
-                    {r.section && r.section !== "document" && (
-                      <span className="result-section">{r.section}</span>
+                <div className="filter-group">
+                  <label htmlFor="bailleur">Bailleur de fonds</label>
+                  <select id="bailleur" value={filters.bailleur} onChange={(e) => handleFilterChange("bailleur", e.target.value)} className="filter-select">
+                    <option value="">Tous les bailleurs</option>
+                    {bailleurs.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <label htmlFor="pays">Pays</label>
+                  <select id="pays" value={filters.pays} onChange={(e) => handleFilterChange("pays", e.target.value)} className="filter-select">
+                    <option value="">Tous les pays</option>
+                    {pays.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div className="filter-group">
+                  <label htmlFor="region">Région</label>
+                  <select id="region" value={filters.region} onChange={(e) => handleFilterChange("region", e.target.value)} className="filter-select">
+                    <option value="">Toutes les régions</option>
+                    {regions.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              </div>
+              {Object.values(filters).some((v) => v) && (
+                <button type="button" className="reset-filters-btn" onClick={resetFilters}>Réinitialiser les filtres</button>
+              )}
+            </div>
+          </form>
+
+          {loading && <div className="loading-hint">Analyse du document en cours — cela peut prendre jusqu'à 30 secondes.</div>}
+
+          {error && (
+            <div className="error-box">
+              <span className="error-icon">⚠</span>
+              <div><strong>Erreur</strong><p>{error}</p></div>
+            </div>
+          )}
+
+          {hasSearched && !loading && (
+            <div className="results-section">
+              {results.length > 1 && (
+                <div className="results-count-header">
+                  <h3>{results.length} appels d'offres pertinents trouvés</h3>
+                  <span>classés par pertinence sémantique</span>
+                </div>
+              )}
+
+              {results.length === 0 ? (
+                <div className="no-results"><p>Aucun TdR ne correspond à votre recherche.</p></div>
+              ) : (
+                results.map((result, idx) => (
+                  <article className="doc-card" key={idx}>
+                    <div className="doc-card-header">
+                      <div className="doc-card-title-block">
+                        <h3 className="doc-card-title">{result.file.replace(/\.pdf$/i, "")}</h3>
+                        <div className="doc-card-meta">
+                          {result.bailleur && <span><strong>Bailleur:</strong> {result.bailleur}</span>}
+                          {result.pays && <span><strong>Pays:</strong> {result.pays}</span>}
+                          {result.domaine && <span><strong>Domaine:</strong> {result.domaine}</span>}
+                        </div>
+                      </div>
+                      <div className="doc-card-score">
+                        <span className="doc-score-value">{scorePercent(result.score)}%</span>
+                        <span className="doc-score-label">{getScoreLabel(result.score)}</span>
+                      </div>
+                    </div>
+
+                    {idx === 0 && agentAnswer && (
+                      <div className="doc-answer-box">
+                        <span className="doc-answer-label">{results.length === 1 ? "Réponse d'après ce TdR" : "Synthèse basée sur les TdR les plus pertinents"}</span>
+                        <p>{agentAnswer}</p>
+                      </div>
                     )}
-                  </div>
-                  <p className="result-text">{r.text?.slice(0, 600)}…</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
 
-        {!loading && hasSearched && results.length === 0 && !error && !agentAnswer && (
-          <div className="empty-state">
-            <p className="empty-title">Aucun résultat pour cette recherche.</p>
-            <p>Essayez des termes plus généraux ou retirez certains filtres.</p>
-          </div>
-        )}
+                    <div className="doc-card-actions">
+                      <a href={getDownloadUrl(result.file)} className="doc-download-link" target="_blank" rel="noopener noreferrer">Télécharger le TdR</a>
+                      <button className="doc-similar-toggle" onClick={() => fetchSimilar(result.file, idx)}>{getSimilarButtonLabel(idx)}</button>
+                    </div>
 
-        {!hasSearched && (
-          <div className="empty-state">
-            <p className="empty-title">Prêt à interroger votre base de TdR.</p>
-            <p>Lancez une recherche ci-dessus pour afficher les missions correspondantes.</p>
-          </div>
-        )}
-      </main>
+                    {expandedSimilar === idx && (
+                      <div className="similar-missions">
+                        {similarMissions[idx]?.length > 0 ? (
+                          <ul className="similar-list">
+                            {similarMissions[idx].map((sim, simIdx) => (
+                              <li key={simIdx} className="similar-item">
+                                <span className="similar-file">{sim.file.replace(/\.pdf$/i, "")}</span>
+                                <span className="similar-score">{scorePercent(sim.score)}%</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="similar-empty">Aucune mission similaire trouvée.</p>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </section>
 
       <footer className="footer">
-        <span>TENDERSCOPE — Agentic RAG pour appels d'offres internationaux</span>
+        <div className="footer-content">
+          <p>&copy; 2024 TenderScope — Plateforme Agentic RAG pour Termes de Référence</p>
+          <p className="footer-link">Développé en partenariat avec EY</p>
+        </div>
       </footer>
     </div>
   );

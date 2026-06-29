@@ -1,12 +1,12 @@
 import os
 from dotenv import load_dotenv
 from groq import Groq
-from app.search import search
+from app.search import search, match_file_in_query, get_all_chunks_for_file, multi_search
 
 load_dotenv()
 
 client = Groq(api_key=os.environ["GROQ_API_KEY"])
-MODEL = "llama-3.3-70b-versatile"  # bon équilibre qualité/vitesse, multilingue
+MODEL = "llama-3.3-70b-versatile"
 
 
 def call_llm(prompt):
@@ -18,121 +18,105 @@ def call_llm(prompt):
     return response.choices[0].message.content
 
 
-# =========================
-# ÉTAPE 1 : Reformulation de la requête (query expansion)
-# =========================
-def expand_query(user_query):
+def generate_answer(user_query, results, max_context_chunks=8):
     """
-    Génère 2-3 reformulations de la requête utilisateur pour améliorer le rappel
-    (synonymes métier, variante FR/EN, termes techniques du secteur).
-    """
-    prompt = f"""Tu es un assistant qui aide à reformuler des requêtes de recherche
-pour un moteur de recherche de Termes de Référence (TdR) d'appels d'offres internationaux
-(développement, coopération, ONG, bailleurs de fonds).
-
-Requête utilisateur : "{user_query}"
-
-Génère exactement 3 reformulations alternatives de cette requête, qui captent le même besoin
-mais avec des synonymes métier, une variante en anglais si la requête est en français (ou vice versa),
-et des termes techniques du secteur (santé, agriculture, gouvernance, évaluation de projet, etc.).
-
-Réponds UNIQUEMENT avec les 3 reformulations, une par ligne, sans numérotation, sans préambule."""
-
-    text = call_llm(prompt)
-    variants = [line.strip() for line in text.strip().split("\n") if line.strip()]
-
-    return [user_query] + variants[:3]
-
-
-# =========================
-# ÉTAPE 2 : Recherche multi-requêtes + fusion + déduplication
-# =========================
-def multi_search(user_query, top_k=10, score_threshold=0.45, **filters):
-    """
-    Lance la recherche avec la requête originale + les reformulations,
-    fusionne les résultats, déduplique par (file, chunk_id), garde le meilleur score.
-    """
-    queries = expand_query(user_query)
-    print(f"🔍 Requêtes utilisées : {queries}")
-
-    merged = {}
-    for q in queries:
-        results = search(q, top_k=top_k, score_threshold=score_threshold, **filters)
-        for r in results:
-            key = (r["file"], r["chunk_id"])
-            if key not in merged or r["score"] > merged[key]["score"]:
-                merged[key] = r
-
-    final_results = sorted(merged.values(), key=lambda x: x["score"], reverse=True)
-    return final_results[:top_k]
-
-
-# =========================
-# ÉTAPE 3 : Synthèse finale avec citations
-# =========================
-def generate_answer(user_query, results, max_context_chunks=6):
-    """
-    Construit une réponse synthétique à partir des meilleurs chunks trouvés,
-    avec citation explicite des fichiers sources.
+    Genere une reponse synthetique courte et factuelle.
     """
     if not results:
-        return "Aucun résultat pertinent trouvé pour cette requête dans la base de TdR."
+        return "Cette information n'est pas mentionnee dans le document."
 
     context_blocks = []
     for r in results[:max_context_chunks]:
-        context_blocks.append(f"[Source: {r['file']}]\n{r['text']}")
+        context_blocks.append(r["text"])
 
     context = "\n\n---\n\n".join(context_blocks)
 
-    prompt = f"""Tu es un assistant spécialisé dans l'analyse de Termes de Référence (TdR)
-d'appels d'offres internationaux (développement, coopération, ONG).
+    prompt = f"""Tu es un assistant qui repond a des questions sur des Termes de Reference (TdR).
 
-Question de l'utilisateur : "{user_query}"
+Question : "{user_query}"
 
-Voici des extraits de TdR pertinents trouvés dans la base documentaire :
+Extraits du TdR :
 
 {context}
 
-Réponds à la question de l'utilisateur en te basant UNIQUEMENT sur ces extraits.
-Si la question porte sur des missions, profils ou compétences recherchées, mets-les en évidence clairement.
-Cite le nom du fichier source entre parenthèses après chaque affirmation.
-Si les extraits ne permettent pas de répondre complètement, dis-le clairement.
-Réponds dans la même langue que la question de l'utilisateur."""
+REGLES STRICTES :
+- Reponds UNIQUEMENT avec les faits presents dans les extraits ci-dessus.
+- Sois direct et factuel. Pas de phrase d'introduction ni de conclusion.
+- Si la question porte sur un bareme, des criteres, ou une liste -> utilise une liste a puces claire avec les points/valeurs exacts.
+- Si l'information demandee n'est PAS dans les extraits, reponds exactement : "Cette information n'est pas mentionnee dans le document."
+- Ne fais AUCUNE supposition, AUCUNE deduction, AUCUNE hypothese.
+- Reponds dans la meme langue que la question.
+
+Reponse :"""
 
     return call_llm(prompt)
 
 
-# =========================
-# FONCTION PRINCIPALE DE L'AGENT
-# =========================
-def agentic_search(user_query, top_k=10, score_threshold=0.45, **filters):
+def agentic_search(user_query, top_k=5, score_threshold=0.55, **filters):
     """
-    Pipeline agentic complet :
-    1. Expansion de requête (reformulations)
-    2. Recherche multi-requêtes + fusion
-    3. Génération d'une réponse synthétique avec citations
+    Si un fichier est nomme dans la question : recupere TOUS ses chunks,
+    genere UNE reponse synthetique, et retourne UNE seule "carte document"
+    avec ses metadonnees (pas une liste de chunks numerotes).
+
+    Sinon : recherche semantique classique, deduplique par fichier
+    (un seul resultat par document, le meilleur score), limite a top_k documents distincts.
     """
-    results = multi_search(user_query, top_k=top_k, score_threshold=score_threshold, **filters)
-    answer = generate_answer(user_query, results)
+    targeted_file = match_file_in_query(user_query)
+
+    if targeted_file:
+        print(f"Fichier cible detecte: {targeted_file}")
+        all_chunks = get_all_chunks_for_file(targeted_file)
+        answer = generate_answer(user_query, all_chunks)
+
+        best_chunk = all_chunks[0] if all_chunks else {}
+        sources = [{
+            "file": targeted_file,
+            "score": 1.0,
+            "domaine": best_chunk.get("domaine"),
+            "bailleur": best_chunk.get("bailleur"),
+            "pays": best_chunk.get("pays"),
+            "region": best_chunk.get("region"),
+            "annee": best_chunk.get("annee"),
+            "sections_count": len(all_chunks),
+        }]
+
+    else:
+        raw_results = multi_search(user_query, top_k=top_k * 4, score_threshold=score_threshold, **filters)
+        answer = generate_answer(user_query, raw_results)
+
+        # deduplication stricte : un seul resultat par fichier (le meilleur score)
+        seen_files = {}
+        for r in raw_results:
+            f = r["file"]
+            if f not in seen_files or r["score"] > seen_files[f]["score"]:
+                seen_files[f] = r
+
+        deduped = sorted(seen_files.values(), key=lambda x: x["score"], reverse=True)[:top_k]
+
+        sources = [{
+            "file": r["file"],
+            "score": r["score"],
+            "domaine": r.get("domaine"),
+            "bailleur": r.get("bailleur"),
+            "pays": r.get("pays"),
+            "region": r.get("region"),
+            "annee": r.get("annee"),
+            "sections_count": 1,
+        } for r in deduped]
 
     return {
         "query": user_query,
         "answer": answer,
-        "sources": results,
+        "sources": sources,
+        "targeted_file": targeted_file,
     }
 
 
-# =========================
-# DEBUG
-# =========================
 def ask_agent(query, **filters):
     result = agentic_search(query, **filters)
-
-    print("\n🤖 RÉPONSE DE L'AGENT\n")
+    print("\nREPONSE\n")
     print(result["answer"])
-
-    print("\n📚 SOURCES UTILISÉES\n")
-    for r in result["sources"][:5]:
-        print(f"  - {r['file']} (score: {r['score']}, section: {r['section']})")
-
+    print("\nSOURCES\n")
+    for s in result["sources"]:
+        print(f"  - {s['file']} ({s['score']})")
     return result

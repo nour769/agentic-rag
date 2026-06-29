@@ -2,11 +2,10 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 import os
 
-# ✅ Use local storage instead of remote server
-db_path = os.path.join(os.path.dirname(__file__), "..", "qdrant_storage")
-os.makedirs(db_path, exist_ok=True)
-client = QdrantClient(path=db_path)
-
+# Connexion au serveur Qdrant (local en dev, conteneur Docker en prod)
+QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.environ.get("QDRANT_PORT", 6333))
+client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=60)
 COLLECTION_NAME = "tdr_chunks"
 BATCH_SIZE = 200
 

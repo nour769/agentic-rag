@@ -2,45 +2,68 @@ from app.preprocess import load_all_pdfs
 from app.chunking import chunk_text
 from app.embeddings import embed
 from app.vector_db import create_collection, insert_vectors
+from app.metadata_extractor import extraire_metadata
 import os
 
+# ─── CHEMINS ───────────────────────────────────────────────
 base_dir = os.path.dirname(__file__)
 folder = os.path.abspath(os.path.join(base_dir, "..", "data", "tdrs"))
 
-print("[FOLDER]:", folder)
-print("[FILES IN FOLDER]:", os.listdir(folder))
+print("📁 FOLDER:", folder)
+print("📄 FILES IN FOLDER:", os.listdir(folder))
 
+# ─── CHARGEMENT DES PDFs ───────────────────────────────────
 docs = load_all_pdfs(folder)
-print("[DOCS LOADED]:", len(docs))
+print(f"✅ DOCS LOADED: {len(docs)}")
 
 if len(docs) == 0:
-    print("[ERROR] NO DOCS FOUND - STOPPING")
+    print("❌ NO DOCS FOUND - STOP HERE")
     exit()
 
-# CHUNKING (section-aware)
+# ─── CHUNKING + METADATA ───────────────────────────────────
+# ✅ Bug corrigé — tu avais déclaré all_chunks = [] deux fois
 all_chunks = []
-for doc in docs:
+
+for i, doc in enumerate(docs):
+    print(f"[{i+1}/{len(docs)}] ✂️  Chunking : {doc['file_name']}")
+
+    # Extraire les métadonnées du document
+    metadata = extraire_metadata(doc["text"])
+
+    # Découper en chunks
     chunks = chunk_text(doc["text"])
-    for i, chunk in enumerate(chunks):
+
+    for j, chunk in enumerate(chunks):
         all_chunks.append({
             "file_name": doc["file_name"],
-            "chunk_id": i,
+            "chunk_id": j,
             "text": chunk["text"],
             "section": chunk["section"],
+            # Métadonnées pour les filtres Qdrant
+            "bailleur": metadata.get("bailleur", ""),
+            "pays":     metadata.get("pays", ""),
+            "domaine":  metadata.get("domaine", ""),
+            "annee":    metadata.get("annee", "")
         })
 
-print("[CHUNKS]:", len(all_chunks))
+print(f"✅ CHUNKS: {len(all_chunks)}")
 
-# EMBEDDINGS
+# ─── EMBEDDINGS ────────────────────────────────────────────
+print("⏳ Création des embeddings...")
 texts = [c["text"] for c in all_chunks]
-print("[TYPE CHECK]:", type(texts[0]))
-
 vectors = embed(texts, is_query=False)
+print(f"✅ VECTORS DONE: {len(vectors)}")
 
-print("[VECTORS DONE]:", len(vectors))
+# Vérification cohérence
+if len(vectors) != len(all_chunks):
+    print(f"❌ ERREUR : {len(vectors)} vecteurs pour {len(all_chunks)} chunks !")
+    exit()
 
-# QDRANT
-create_collection(vector_size=1024)
+# ─── INDEXATION QDRANT ─────────────────────────────────────
+print("⏳ Indexation dans Qdrant...")
+create_collection(vector_size=384)
 insert_vectors(vectors, all_chunks)
 
-print("[SUCCESS] INDEXING DONE")  
+print("\n🎉 INDEXING DONE")
+print(f"   → {len(all_chunks)} chunks indexés")
+print(f"   → {len(docs)} documents traités")
