@@ -1,8 +1,8 @@
-from app.preprocess import load_all_pdfs
-from app.chunking import chunk_text
-from app.embeddings import embed
-from app.vector_db import create_collection, insert_vectors
-from app.metadata_extractor import extraire_metadata
+from preprocess import load_all_pdfs
+from chunking import chunk_text
+from embeddings import embed
+from vector_db import create_collection, insert_vectors
+from metadata_extractor import extraire_metadata
 import os
 
 # ─── CHEMINS ───────────────────────────────────────────────

@@ -1,5 +1,5 @@
-from app.embeddings import embed
-from app.vector_db import client, COLLECTION_NAME
+from embeddings import embed
+from vector_db import client, COLLECTION_NAME
 
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 

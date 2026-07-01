@@ -4,8 +4,8 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from app.search import search, find_similar
-from app.theagent import agentic_search
+from search import search, find_similar
+from theagent import agentic_search
 
 app = FastAPI(title="Agentic RAG TdR API")
 app.add_middleware(

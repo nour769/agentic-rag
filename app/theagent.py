@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from groq import Groq
-from app.search import search, match_file_in_query, get_all_chunks_for_file, multi_search
+from search import search, match_file_in_query, get_all_chunks_for_file, multi_search
 
 load_dotenv()
 
